@@ -3,10 +3,10 @@ NAME=beacon-flood
 all: deps build
 
 deps:
-  go get github.com/google/gopacket
+	go get github.com/google/gopacket
 
 build:
-  go build -o ${NAME} main.go
+	go build -o ${NAME} main.go
 
 clean:
 	go clean

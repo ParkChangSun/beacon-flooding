@@ -21,10 +21,9 @@ type SimpleRadioTap struct {
 	DataRate         uint8
 	ChannelFrequency uint16
 	ChannelFlags     uint16
-	AnthenaSignal    uint8
+	AnthenaSignal    uint16
 	RxFlags          uint16
-	AnthenaSignalDup uint8
-	Anthena          uint8
+	AnthenaSignalDup uint16
 }
 
 type SimpleDot11 struct {
@@ -48,43 +47,45 @@ type SimpleDot11Info struct {
 	Content string
 }
 
-func (info SimpleDot11Info) WriteToBuffer(buf *bytes.Buffer) {
-	binary.Write(buf, binary.LittleEndian, info.Number)
-	binary.Write(buf, binary.LittleEndian, info.Length)
-	buf.WriteString(info.Content)
-}
-
 func main() {
+	if len(os.Args) != 3 {
+		fmt.Printf("Input args count not match %d of 2\n", len(os.Args)-1)
+		os.Exit(1)
+	}
+
 	ifSelect := os.Args[1]
-	handler, err := pcap.OpenLive(ifSelect, 1600, true, pcap.BlockForever)
+	handler, err := pcap.OpenLive(ifSelect, 2048, true, pcap.BlockForever)
+	utils.PanicError(err)
+
+	ssids, err := utils.ReadSsidList(os.Args[2])
 	utils.PanicError(err)
 
 	// buf := gopacket.NewSerializeBuffer()
 	// opts := gopacket.SerializeOptions{}
+	// gopacket.SerializeLayers(buf, opts, a, b, c)
 
 	radioTap := SimpleRadioTap{
 		HeaderRevision:   0x00,
 		HeaderPad:        0x00,
 		HeaderLength:     0x0018,
-		Present1:         0xa0000000,
-		Present2:         0x00000000,
+		Present1:         0xa000402e,
+		Present2:         0x00000820,
 		Flags:            0x00,
 		DataRate:         0x02,
 		ChannelFrequency: 0x096c,
 		ChannelFlags:     0x00a0,
-		AnthenaSignal:    0xab,
+		AnthenaSignal:    0x00ab,
 		RxFlags:          0x0000,
-		AnthenaSignalDup: 0xab,
-		Anthena:          0,
+		AnthenaSignalDup: 0x00ab,
 	}
 
 	dot11 := SimpleDot11{
 		Type:               0x0080,
 		Duration:           0x0000,
 		DestinationAddress: [6]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-		SourceAddress:      [6]byte{0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc},
-		BssId:              [6]byte{0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc},
-		FragSeqNum:         0x1dc0,
+		SourceAddress:      [6]byte{0x58, 0x86, 0x94, 0xf3, 0x94, 0xdb},
+		BssId:              [6]byte{0x58, 0x86, 0x94, 0xf3, 0x94, 0xdb},
+		FragSeqNum:         0x0000,
 	}
 
 	beacon := SimpleDot11Beacon{
@@ -93,28 +94,48 @@ func main() {
 		Flags:     0x1c31,
 	}
 
-	ssidValue := "hellotcp544D"
 	ssid := SimpleDot11Info{
-		Number:  0,
-		Length:  uint8(len(ssidValue)),
-		Content: ssidValue,
+		Number: 0,
+		Length: 0,
 	}
 
-	buf := new(bytes.Buffer)
+	rates := []byte{0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24}
+	channel := []byte{0x03, 0x01, 0x0b}
 
-	binary.Write(buf, binary.LittleEndian, radioTap)
-	binary.Write(buf, binary.LittleEndian, dot11)
-	binary.Write(buf, binary.LittleEndian, beacon)
+	macs := make(map[int][6]byte)
+	for i := 0; i < len(ssids); i++ {
+		macs[i] = utils.GenerateRandMac()
+		fmt.Printf("Random mac generated for \"%s\" : %s\n", ssids[i], utils.BytesToMac(macs[i]))
+	}
 
-	binary.Write(buf, binary.LittleEndian, ssid.Number)
-	binary.Write(buf, binary.LittleEndian, ssid.Length)
-	buf.WriteString(ssid.Content)
+	go utils.ExecutingBar()
 
-	fmt.Printf("% 2x", buf.Bytes())
+	for {
+		dot11.FragSeqNum += 16
 
-	// gopacket.SerializeLayers(buf, opts, a, b, c)
-	packetReady := buf.Bytes()
+		// dot11.SourceAddress = [6]byte{0x58, 0x86, 0x94, 0xf3, 0x94, 0xdb}
+		// dot11.BssId = [6]byte{0x58, 0x86, 0x94, 0xf3, 0x94, 0xdb}
 
-	err = handler.WritePacketData(packetReady)
-	utils.PanicError(err)
+		for i, s := range ssids {
+			buf := new(bytes.Buffer)
+
+			dot11.SourceAddress = macs[i]
+			dot11.BssId = macs[i]
+
+			binary.Write(buf, binary.LittleEndian, radioTap)
+			binary.Write(buf, binary.LittleEndian, dot11)
+			binary.Write(buf, binary.LittleEndian, beacon)
+
+			binary.Write(buf, binary.LittleEndian, ssid.Number)
+			binary.Write(buf, binary.LittleEndian, uint8(len(s)))
+			buf.WriteString(s)
+
+			buf.Write(rates)
+			buf.Write(channel)
+
+			err = handler.WritePacketData(buf.Bytes())
+			utils.PanicError(err)
+		}
+		time.Sleep(time.Millisecond * 100)
+	}
 }
